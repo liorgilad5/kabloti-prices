@@ -41,10 +41,10 @@ def main() -> None:
             cities = f.read().strip()
         # Yohananof is left out on purpose (its server is not to be accessed from here)
         run(sys.executable, '-I', 'build_prices.py', '--cities', cities, '--out', 'data', '--skip', 'yohananof')
-        run('git', 'pull', '--rebase', '--quiet')
         run('git', 'add', 'data')
         if run('git', 'status', '--porcelain', 'data').strip():
             run('git', 'commit', '--quiet', '-m', 'Prices refreshed in Israel')
+            run('git', 'pull', '--rebase', '--autostash', '--quiet')
             run('git', 'push', '--quiet')
             log('refreshed and pushed')
         else:
