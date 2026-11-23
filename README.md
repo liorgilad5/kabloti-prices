@@ -7,4 +7,8 @@ A daily job that reads the price files Israeli supermarket chains publish by law
 - Cities: `cities.txt` (comma separated)
 - Output (GitHub Pages): `index.json`, `city-<CBS code>.json`
 
+Some chains refuse servers outside Israel. For those, the job keeps the newest prices found in
+`data/` (built on a computer in Israel: `python build_prices.py --out data`) or in yesterday's
+published files; each city file says in `asOf` from when every chain's prices are.
+
 Only public data; nothing about users is collected or stored here.

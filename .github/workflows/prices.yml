@@ -4,6 +4,8 @@ on:
   schedule:
     - cron: '30 4 * * *'   # every morning, after the chains publish (Israel time ~07:30)
   workflow_dispatch:
+  push:
+    paths: ['data/**', 'build_prices.py', 'cities.txt']
 
 permissions:
   contents: read
@@ -23,8 +25,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Last published files (kept for a chain that cannot be read today)
+        run: |
+          mkdir -p prev
+          for f in $(curl -sf https://liorgilad5.github.io/kabloti-prices/index.json | python -c "import sys,json;print(' '.join(c['file'] for c in json.load(sys.stdin)['cities']))"); do
+            curl -sf -o "prev/$f" "https://liorgilad5.github.io/kabloti-prices/$f" || true
+          done
       - name: Build price files
-        run: python build_prices.py --cities "$(cat cities.txt)" --out public
+        run: python build_prices.py --cities "$(cat cities.txt)" --out public --fallback data,prev
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public
