@@ -1,2 +1,4 @@
 __pycache__/
 public/
+refresh.log
+.refresh.lock
