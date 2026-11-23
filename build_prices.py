@@ -279,6 +279,10 @@ def build(cities: list[str], out_dir: str, skip: set[str], fallback: list[str]) 
                     continue
                 if label not in doc.get('chains', []):
                     continue
+                # only a file that really has this chain's branches (and says from when)
+                li = doc['chains'].index(label)
+                if not any(sci == li for sci, _ in doc.get('stores', [])):
+                    continue
                 at = doc.get('asOf', {}).get(label, doc.get('updated', ''))
                 if at > best_at:
                     best_doc, best_at = doc, at
