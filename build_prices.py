@@ -28,11 +28,11 @@ from xml.etree import ElementTree as ET
 UA = {'User-Agent': 'Mozilla/5.0 (price-transparency reader)'}
 
 
-def get(url: str, data: bytes | None = None, tries: int = 3) -> bytes:
+def get(url: str, data: bytes | None = None, tries: int = 2) -> bytes:
     for i in range(tries):
         try:
             req = urllib.request.Request(url, data=data, headers=UA)
-            with urllib.request.urlopen(req, timeout=180) as r:
+            with urllib.request.urlopen(req, timeout=60) as r:
                 return r.read()
         except Exception:
             if i == tries - 1:
@@ -217,7 +217,7 @@ def store_city(store: dict, codes: dict[str, str]) -> str:
 # ---------------------------------------------------------------- build
 
 
-def build(cities: list[str], out_dir: str, skip: set[str]) -> int:
+def build(cities: list[str], out_dir: str, skip: set[str], fallback: list[str]) -> int:
     import os
 
     os.makedirs(out_dir, exist_ok=True)
@@ -227,6 +227,8 @@ def build(cities: list[str], out_dir: str, skip: set[str]) -> int:
     chains = [c for c in CHAINS if c.key not in skip]
     per_city: dict[str, dict] = {c: {'stores': [], 'items': {}} for c in wanted}
     errors: list[str] = []
+    loaded: set[str] = set()  # chains with fresh prices
+    now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
     for ci, chain in enumerate(chains):
         try:
@@ -247,6 +249,7 @@ def build(cities: list[str], out_dir: str, skip: set[str]) -> int:
                 except Exception as e:
                     errors.append(f'{chain.key} branch: {e}')
                     continue
+                loaded.add(chain.label)
                 city = per_city[store_city(s, codes)]
                 city['stores'].append([ci, s['name']])
                 si = len(city['stores']) - 1
@@ -258,7 +261,44 @@ def build(cities: list[str], out_dir: str, skip: set[str]) -> int:
                     if best is None or price < best[0]:
                         it[1][ci] = (price, si)
 
-    updated = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    # a chain that could not be read (some block servers outside Israel) keeps its last prices,
+    # from the newest earlier file that has it (the published one, or one built in Israel)
+    labels = [c.label for c in chains]
+    as_of: dict[str, dict[str, str]] = {name: {l: now for l in loaded} for name in per_city}
+    for name, data in per_city.items():
+        code = code_of.get(name, re.sub(r'\W+', '-', name))
+        for ci, label in enumerate(labels):
+            if label in loaded:
+                continue
+            best_doc, best_at = None, ''
+            for d in fallback:
+                try:
+                    with open(f'{d}/city-{code}.json', encoding='utf8') as f:
+                        doc = json.load(f)
+                except (OSError, ValueError):
+                    continue
+                if label not in doc.get('chains', []):
+                    continue
+                at = doc.get('asOf', {}).get(label, doc.get('updated', ''))
+                if at > best_at:
+                    best_doc, best_at = doc, at
+            if not best_doc:
+                continue
+            old_ci = best_doc['chains'].index(label)
+            store_map = {}
+            for i, (sci, sname) in enumerate(best_doc['stores']):
+                if sci == old_ci:
+                    data['stores'].append([ci, sname])
+                    store_map[i] = len(data['stores']) - 1
+            for key, iname, flat in best_doc['items']:
+                for i in range(0, len(flat) - 2, 3):
+                    if flat[i] == old_ci and flat[i + 2] in store_map:
+                        it = data['items'].setdefault(key, [iname, {}])
+                        it[1][ci] = (flat[i + 1], store_map[flat[i + 2]])
+            as_of[name][label] = best_at
+            print(f'{name}: {label} kept from {best_at}', file=sys.stderr)
+
+    updated = now
     index = {'v': 1, 'updated': updated, 'chains': [c.label for c in chains], 'cities': [], 'errors': errors}
     for name, data in sorted(per_city.items()):
         code = code_of.get(name, re.sub(r'\W+', '-', name))
@@ -268,7 +308,7 @@ def build(cities: list[str], out_dir: str, skip: set[str]) -> int:
             for ci in sorted(best):
                 flat += [ci, best[ci][0], best[ci][1]]
             rows.append([key, iname, flat])
-        doc = {'v': 1, 'city': name, 'code': code, 'updated': updated, 'chains': [c.label for c in chains], 'stores': data['stores'], 'items': rows}
+        doc = {'v': 1, 'city': name, 'code': code, 'updated': updated, 'asOf': as_of[name], 'chains': labels, 'stores': data['stores'], 'items': rows}
         with open(f'{out_dir}/city-{code}.json', 'w', encoding='utf8') as f:
             json.dump(doc, f, ensure_ascii=False, separators=(',', ':'))
         index['cities'].append({'name': name, 'code': code, 'file': f'city-{code}.json', 'stores': len(data['stores']), 'items': len(rows)})
@@ -285,5 +325,6 @@ if __name__ == '__main__':
     ap.add_argument('--cities', default='באר שבע', help='comma separated')
     ap.add_argument('--out', default='public')
     ap.add_argument('--skip', default='', help='chain keys to skip, comma separated')
+    ap.add_argument('--fallback', default='', help='folders with earlier city files, comma separated')
     a = ap.parse_args()
-    sys.exit(build([c for c in a.cities.split(',') if c.strip()], a.out, {s for s in a.skip.split(',') if s}))
+    sys.exit(build([c for c in a.cities.split(',') if c.strip()], a.out, {s for s in a.skip.split(',') if s}, [d for d in a.fallback.split(',') if d]))
